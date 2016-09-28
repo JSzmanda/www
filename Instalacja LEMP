@@ -1,0 +1,105 @@
+#!/bin/bash
+## Dodajemy repo dotdeb
+echo "## Repo dotdeb.org - Nginx i PHP" >> /etc/apt/sources.list
+echo "deb http://packages.dotdeb.org jessie all" >> /etc/apt/sources.list
+echo "deb-src http://packages.dotdeb.org jessie all" >> /etc/apt/sources.list
+wget https://www.dotdeb.org/dotdeb.gpg
+apt-key add dotdeb.gpg
+echo Trwa instalacjia systemu
+## Aktualizacja systemu
+{
+apt-get -qq update && apt-get upgrade -y
+## Instalujemy właściwe oprogramowanie
+apt-get install -y mariadb-server-core-10.0
+\
+echo 'mariadb-server-10.0 mysql-server/root_password password HASLO' | debconf-set-selections ;\
+echo 'mariadb-server-10.0 mysql-server/root_password_again password HASLO' | debconf-set-selections ;\
+export DEBIAN_FRONTEND=noninteractive ;\
+apt-get install -y mariadb-server
+sed -i 's/^\(bind-address\s.*\)/# \1/' /etc/mysql/my.cnf
+apt-get install sudo ftp htop ntp vnstat nano lsb-release figlet screen ufw fail2ban unattended-upgrades nginx-full php7.0-fpm php7.0-mysql php7.0-cli php7.0-opcache mariadb-client -y
+echo -e "APT::Periodic::Update-Package-Lists \"1\";\nAPT::Periodic::Unattended-Upgrade \"1\";\n" > /etc/apt/apt.conf.d/20auto-upgrades
+} &> /dev/null
+## Konfiguracja strefy czasowej
+timedatectl set-timezone Europe/London
+## Tworzymy użytkownika
+useradd -d /home/NAZWAUZYTKOWNIKASYSTEMU/ -m -s /bin/bash -p $(echo HASLO | openssl passwd -1 -stdin) NAZWAUZYTKOWNIKASYSTEMU
+## Modyfikujemy sudoers
+mkdir -p "/etc/sudoers.d/"
+touch "/etc/sudoers.d/NAZWAUZYTKOWNIKASYSTEMU"
+echo '########## User NAZWAUZYTKOWNIKASYSTEMU ##########' >> /etc/sudoers.d/NAZWAUZYTKOWNIKASYSTEMU
+echo 'NAZWAUZYTKOWNIKASYSTEMU    ALL = NOPASSWD: ALL' >> /etc/sudoers.d/NAZWAUZYTKOWNIKASYSTEMU
+echo '########## User NAZWAUZYTKOWNIKASYSTEMU ##########' >> /etc/sudoers.d/NAZWAUZYTKOWNIKASYSTEMU
+chown NAZWAUZYTKOWNIKASYSTEMU:NAZWAUZYTKOWNIKASYSTEMU /home/NAZWAUZYTKOWNIKASYSTEMU/
+## Konfiguracja PAM w Debianie 8
+sed -i -e 's/PAM no/PAM yes/g' /etc/ssh/sshd_config
+echo 'UseDNS no' >> /etc/ssh/sshd_config
+/etc/init.d/ssh restart
+## Knfiguracja SSH - od tej chwili logowanie na konto root podczas połączeń zdalnych zostaje wyłączone. Pamiętej o tym!
+sed -i -e 's/Port 22/Port PORTSSH/g' /etc/ssh/sshd_config
+sed -i -e 's/PermitRootLogin yes/PermitRootLogin no/g' /etc/ssh/sshd_config
+#sed -i -e 's/#PasswordAuthentication yes/PasswordAuthentication no/g' /etc/ssh/sshd_config
+echo 'UseDNS no' >> /etc/ssh/sshd_config
+/etc/init.d/ssh restart
+## Konfigurujemy teraz środowisko serwera WWW
+mkdir /home/NAZWAUZYTKOWNIKASYSTEMU/www
+mkdir /home/NAZWAUZYTKOWNIKASYSTEMU/logi
+mkdir /home/NAZWAUZYTKOWNIKASYSTEMU/backup
+## Pobieramy pliki stam-view
+wget -O /etc/nginx/sites-available/NAZWAUZYTKOWNIKASYSTEMU ADRES.DO.POBRANIA.PLIKOW/nginx_www
+rm /etc/nginx/sites-enabled/default
+ln -s /etc/nginx/sites-available/NAZWAUZYTKOWNIKASYSTEMU /etc/nginx/sites-enabled/
+sed -i "s,listen = /run/php/php7.0-fpm.sock,listen = 127.0.0.1:9000,g" /etc/php/7.0/fpm/pool.d/www.conf
+cd /home/NAZWAUZYTKOWNIKASYSTEMU/www
+wget ADRES.DO.POBRANIA.PLIKOW/public_html.tar
+{
+tar xvf public_html.tar
+} &> /dev/null
+rm public_html.tar
+## Tworzymy użytkownika i bazę danych dla stam-view
+mysql -uroot -pHASLO -e "CREATE DATABASE NAZWABAZYDANYCH /*\!40100 DEFAULT CHARACTER SET utf8 */;"
+mysql -uroot -pHASLO -e "CREATE USER stam@localhost IDENTIFIED BY 'HASLO';"
+mysql -uroot -pHASLO -e "GRANT ALL PRIVILEGES ON NAZWABAZYDANYCH.* TO 'stam'@'localhost';"
+mysql -uroot -pHASLO -e "FLUSH PRIVILEGES;"
+## Pobieramy wzór strukturę tabel i importujemy do naszej bazy
+cd /home/NAZWAUZYTKOWNIKASYSTEMU
+wget ADRES.DO.POBRANIA.PLIKOW/struktura.sql
+mysql -u root --password=HASLO NAZWABAZYDANYCH < struktura.sql
+rm struktura.sql
+## Dodajemy zadanie do crona
+(crontab -l 2>/dev/null; echo "*/20 * * * * /usr/bin/php /home/NAZWAUZYTKOWNIKASYSTEMU/www/inc/action/cron/Cron.php") | crontab -
+## Restartujemy usługi
+/etc/init.d/nginx restart
+/etc/init.d/mysql restart
+/etc/init.d/php7.0-fpm reload
+## Ustawianie właściciela katalogów i plików
+chown -R NAZWAUZYTKOWNIKASYSTEMU:NAZWAUZYTKOWNIKASYSTEMU /home/NAZWAUZYTKOWNIKASYSTEMU/*
+chown www-data:wwww-data /home/NAZWAUZYTKOWNIKASYSTEMU/www
+## Konfiguracja firewalla ufw
+ufw allow 58522/tcp
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw --force enable
+rm dotdeb.gpg
+echo -e 'HOSTNAME' > /etc/hostname
+echo System pomyślnie zainstalowany
+echo ///////////////////////////////////////
+echo #
+echo Twój adres IP:
+hostname -i
+echo #
+echo Port SSH: Port
+echo #
+echo Hasło użytkownika root MySQL: HASLO
+echo #
+echo Dane SQL NAZWABAZY
+echo Nazwa bazy: NAZWABAZYDANYCH
+echo Nazwa użytkownika: USER
+echo Hasło użytkownika: HASLO
+echo #
+echo #
+echo Login użytkownia systemu Debian: NAZWAUZYTKOWNIKASYSTEMU
+echo Hasło dla użytkownika: HASLO
+echo #
+echo ///////////////////////////////////////
+exit 0
